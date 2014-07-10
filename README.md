@@ -1,0 +1,4 @@
+winansible
+==========
+
+Windows - Ansible stuff
