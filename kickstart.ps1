@@ -234,7 +234,7 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
 	if ($version[0] -lt 4)
 	{
 		write-host "Upgrading .NET framework"
-		$DownloadUrl = "http://opsdev/repo/win_bin/dotNetFx45_Full_setup.exe"
+		$DownloadUrl = "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe"
 		$FileName = $DownLoadUrl.Split('/')[-1]
 		download-file $downloadurl "$powershellpath\$filename"
 		Start-Process "$powershellpath\$filename" -ArgumentList  "/q /norestart"  -NoNewWindow -Wait
@@ -244,11 +244,11 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
 
 	if ($osminor -eq 1)
 	{
-		$DownloadUrl = "http://opsdev/repo/win_bin/Windows6.1-KB2506143-x64.msu"
+		$DownloadUrl = "http://download.microsoft.com/download/E/7/6/E76850B8-DA6E-4FF5-8CCE-A24FC513FD16/Windows6.1-KB2506143-x64.msu"
 	}
 	elseif ($osminor -eq 0)
 	{
-		$DownloadUrl = "http://opsdev/repo/win_bin/Windows6.0-KB2506146-x64.msu"
+		$DownloadUrl = "http://download.microsoft.com/download/E/7/6/E76850B8-DA6E-4FF5-8CCE-A24FC513FD16/Windows6.0-KB2506146-x64.msu"
 	}
 
 	$FileName = $DownLoadUrl.Split('/')[-1]
