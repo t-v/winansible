@@ -1,3 +1,5 @@
+[CmdletBinding()]
+
 Param (
     [string]$SubjectName = $env:COMPUTERNAME,
     [int]$CertValidityDays = 365,
@@ -64,7 +66,7 @@ function create-account ($user, $password, $computer="localhost") {
         $(Throw 'A value for $user and $password is required.')
     }
 	if (LocalUserExist $user) {
-		write-host "$user already exists"
+		write-verbose "$user already exists"
 	} else {
 		$objOu = [ADSI]"WinNT://$computer"
 		$objUser = $objOU.Create("User", $user)
@@ -188,6 +190,52 @@ Function Disable-UAC
         New-ItemProperty -Path $EnableUACRegistryPath -Name $EnableUACRegistryKeyName -Value 0 -PropertyType "DWord"
     }
 }
+
+# Constants
+if (!(Test-Path variable:\NET_FW_DISABLED))        { Set-Variable NET_FW_DISABLED        $False }
+if (!(Test-Path variable:\NET_FW_ENABLED))         { Set-Variable NET_FW_ENABLED         $True }
+if (!(Test-Path variable:\NET_FW_IP_PROTOCOL_TCP)) { Set-Variable NET_FW_IP_PROTOCOL_TCP 6 }
+if (!(Test-Path variable:\NET_FW_IP_PROTOCOL_UDP)) { Set-Variable NET_FW_IP_PROTOCOL_UDP 17 }
+if (!(Test-Path variable:\NET_FW_PROFILE_DOMAIN))  { Set-Variable NET_FW_PROFILE_DOMAIN  0x1 }
+if (!(Test-Path variable:\NET_FW_PROFILE_PRIVATE)) { Set-Variable NET_FW_PROFILE_PRIVATE 0x2 }
+if (!(Test-Path variable:\NET_FW_PROFILE_PUBLIC))  { Set-Variable NET_FW_PROFILE_PUBLIC  0x2 }
+if (!(Test-Path variable:\NET_FW_PROFILE_ALL))     { Set-Variable NET_FW_PROFILE_ALL     0x7FFFFFFF }
+
+function Enable-FirewallRule([String] $name, [String] $description = "", [ScriptBlock] $filter = { $_.Name = $name }, [ScriptBlock] $createRule = {}) {
+    $rules = @($policy.Rules | Where-Object $filter)
+    if ($rules.Count -eq 0) {
+        $rule = New-Object -com HNetCfg.FWRule
+        $rule.Name = $name
+        $rule.Description = $description
+        $rule.Protocol = $NET_FW_IP_PROTOCOL_TCP
+        if ($createRule -ne $null) { $createRule.Invoke($rule) }
+        $rule.Enabled = $NET_FW_ENABLED
+        $policy.Rules.Add($rule)
+        
+        Write-Verbose ("Created the rule ""{0}""" -f $rule.Name)
+    } elseif (@($rules | Where-Object { $_.Enabled }).Count -eq 0) {
+        $rules | Where-Object { !$_.Enabled } | Select-Object -f 1 | ForEach-Object { 
+            $_.Enabled = $NET_FW_ENABLED
+            Write-Verbose ("Enabled the rule ""{0}""" -f $_.Name)
+        }
+    } else {
+        $rules | Where-Object { $_.Enabled } | ForEach-Object {
+            Write-Verbose ("The rule ""{0}"" was already enabled" -f $_.Name)
+        }
+    }
+}
+
+function Remove-FirewallRules([ScriptBlock] $filter = {}) {
+    $rules = @($policy.Rules | Where-Object $filter)
+    if ($rules.Count -gt 0) {
+        $rules | ForEach-Object { Write-Verbose ("Deleting rule: ""{0}""" -f $_.Name); $policy.Rules.Remove($_.Name) }
+    } else {
+        Write-Verbose "No rules matched the supplied filter"
+    }
+}
+
+$policy = New-Object -com HNetCfg.FwPolicy2
+
 #endregion
 
 #Start script
@@ -196,6 +244,9 @@ $reboot = "FALSE"
 if (!(LocalUserExist $user)) {
 	$pass = Read-Host 'What is the ansible password?' -AsSecureString
 	create-account $user $pass
+	Write-Verbose "$user created"
+} else {
+	Write-Verbose "$user already exists"
 }
 AddUserToGroup "Remote Desktop Users" $user
 AddUserToGroup "Administrators" $user
@@ -229,11 +280,11 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
 
 	Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP' -recurse | Get-ItemProperty -name Version -EA 0 | Select Version  | ft -HideTableHeaders | Out-String -OutVariable version  > $null
 	$version=$version[0].split(".")
-	write-host "Installed .Net framework: $version"
+	Write-Verbose "Installed .Net framework: $version"
 	
 	if ($version[0] -lt 4)
 	{
-		write-host "Upgrading .NET framework"
+		Write-Verbose "Upgrading .NET framework"
 		$DownloadUrl = "http://download.microsoft.com/download/1/6/7/167F0D79-9317-48AE-AEDB-17120579F8E2/NDP451-KB2858728-x86-x64-AllOS-ENU.exe"
 		$FileName = $DownLoadUrl.Split('/')[-1]
 		download-file $downloadurl "$powershellpath\$filename"
@@ -254,7 +305,7 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
 	$FileName = $DownLoadUrl.Split('/')[-1]
 	download-file $downloadurl "$powershellpath\$filename"
 
-	write-host "Upgrading Powershell"
+	Write-Verbose "Upgrading Powershell"
 	#Start-Process -FilePath "$powershellpath\$filename" -ArgumentList  "/quiet /norestart"  -Wait
 	Start-Process "wusa.exe" -ArgumentList "$powershellpath\$filename /quiet /norestart"  -Wait
 }
@@ -342,7 +393,7 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
     $selectorset.add('Address','*')
 
     Write-Verbose "Enabling SSL-based remoting"
-    New-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet $selectorset -ValueSet $valueset 
+    New-WSManInstance -ResourceURI 'winrm/config/Listener' -SelectorSet $selectorset -ValueSet $valueset
  }
  Else
  {
@@ -363,15 +414,15 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
     Write-verbose "basic auth already enabled"
  }
  
-#FIrewall
-netsh advfirewall firewall add rule Profile=public name="Allow WinRM HTTPS" dir=in localport=5986 protocol=TCP action=allow
-
-
+#Firewall
+Enable-FirewallRule "Enable WinRM HTTPS" `
+	-filter { $_.Enabled -and (	$_.LocalPorts -eq "5986" -or $_.Name -eq "Enable WinRM HTTPS" ) } `
+	-createRule { param($rule) $rule.Protocol = $NET_FW_IP_PROTOCOL_TCP; $rule.LocalPorts = "5986"; $rule.RemoteAddresses = "10.15.12.76" }
 
 Write-Verbose "PS Remoting successfully setup for Ansible"
 
 if (!($reboot)) {
-	write-host "a reboot is required."
+	Write-Verbose "a reboot is required."
 	$retval = Read-Host 'Do you wish to reboot? [y/N]'
 	if ( ($retval -eq 'y') -or ($retval -eq 'yes') ) 
 	{
